@@ -1,123 +1,123 @@
 ---
 name: exam-photo-to-pdf
-description: Turns photos or screenshots of an exam paper or worksheet into a clean, printable A4 PDF — removes watermarks and printed answers, keeps the page exactly as it was laid out. Use when a teacher or parent has page images of a test paper and wants to print it or hand it out. Not for rewriting questions or editing PDF forms.
+description: 把手机拍的试卷或练习卷照片转成干净、可直接打印的 A4 PDF，可去掉水印和印刷答案，版式一行不动。老师或家长手上有试卷照片、想打印出来给孩子做时使用。不用于改写题目或填写 PDF 表单。
 ---
 
-# Exam Photo to PDF
+# 试卷照片转可打印 PDF
 
-Phone photos of a test paper in, a printable A4 sheet out. Everything on the page stays where it was; watermarks and printed answer keys come off; the sheet prints at the size the original was designed for.
+进来的是手机拍的试卷照片，出去的是能直接打印、发下去、归档的 A4 页面。版式原位不动，水印和印刷答案去掉，纸张尺寸按原卷设计的来。
 
-Three rules keep the result trustworthy: measure the page before deciding how to fix it, only remove what was clearly classified, and compare pixels afterwards so nothing is invented or lost.
+三条规矩保证结果可信：先量清楚再决定怎么处理、只删除已经分辨清楚的东西、做完用像素逐张比对，确保没有凭空增加也没有丢失。
 
-## First, measure the page
+## 第一步，先量
 
-Never assume "it's a phone photo, so I need perspective correction". Run the probe on every page first. Pages exported from a PDF viewer, scanned flatbeds, and screenshots need none of it, and applying deskew/warp to them only destroys quality.
+不要想当然认为「手机拍的一定要做透视矫正」。先用探针把每一页量一遍。从 PDF 阅读器导出的整页图、平板扫描件、屏幕截图，都不需要任何矫正，硬做倾斜校正或透视变换只会把画质弄坏。
 
 ```bash
 python3 scripts/probe_pages.py 1.jpg 2.jpg 3.jpg 4.jpg
 ```
 
-It reports per page: pixel size, aspect vs A4, effective dpi at full-page print, residual rotation, ink bounding box in mm, background colour, and the colour-cluster layout of saturated pixels. Read those numbers, then choose a route.
+它会逐页给出：像素尺寸、相对 A4 的长宽比偏差、整页打印时的有效 dpi、残余旋转角、墨迹外框（毫米）、背景底色，以及彩色像素的聚簇分布。看完这些数字再选路线。
 
-Decision inputs that matter:
+真正影响决策的几个指标：
 
-| Signal | Meaning for the pipeline |
+| 信号 | 对处理流程的含义 |
 |---|---|
-| Effective dpi ≥ 300 | Keep as is, no sharpening needed |
-| Effective dpi 140–300, screen-rendered text | Native resolution + levels + light unsharp; never upscale |
-| Aspect within 0.3% of A4 | Place full-bleed on A4, no crop, no scale |
-| Residual rotation > 0.3° | Deskew; below that, ignore |
-| Ink bbox touches an edge | Content is cut off — tell the user before proceeding |
-| Light uniform tint covering the whole page | Watermark/label overlay, removable by a white-point lift |
-| Saturated red/blue clusters | Printed answer key or handwriting — must be classified, not blindly erased |
+| 有效 dpi ≥ 300 | 原样用，不必锐化 |
+| 有效 dpi 140–300、屏幕渲染的文字 | 原分辨率 + 色阶 + 轻度锐化，绝不放大 |
+| 长宽比与 A4 偏差 ≤ 0.3% | 按 A4 满版放置，不裁切、不缩放 |
+| 残余旋转 > 0.3° | 需要摆正；小于这个值忽略 |
+| 墨迹外框贴到画幅边缘 | 内容被切掉了一部分——先告知用户再动手 |
+| 整页覆盖一层很淡的均匀色 | 水印或标签层，抬白点即可去掉 |
+| 出现高饱和的红/蓝聚簇 | 印刷答案或手写笔迹——必须先分类，不能盲删 |
 
-## Pick one of three routes
+## 三条路线，选一条并说明理由
 
-- **A 保真 / faithful** — one image per page, no retouching. Only for archiving or forwarding. Zero content risk, keeps watermarks and answer keys.
-- **B 净化 / cleaned** — white-point lift, optional watermark/answer removal, light sharpening, lossless PDF. This is the default for anything that will be printed and used.
-- **C 重排 / re-typeset** — OCR and rebuild as native text. Only when the result must be editable or reused long-term; it costs manual proofreading of every formula and figure, so do not pick it for a one-off print.
+- **A 保真** — 一页一图，不做任何修饰。只用于存档或转发。内容零风险，但水印和答案会一起带出去。
+- **B 净化** — 抬白点，按需去水印、去答案，轻度锐化，无损导出 PDF。凡是要拿去打印、要用的，默认走这条。
+- **C 重排** — OCR 识别后重新排版成原生文字。只在需要可编辑、要长期复用时选；代价是每一道公式、每一张图都要人工校对，一次性打印不要选它。
 
-State the route and why in one line, then execute. Do not silently pick C.
+先用一句话说明走哪条、为什么，再动手。不要默默选 C。
 
-## The cleaning pass
+## 净化流程
 
-1. **White-point lift.** Map the paper tint to pure white. A screen-rendered page's overlay often sits 10–20 levels below white; scaling by `255/236` removes it while leaving black ink at black. Measure the actual background colour from the probe instead of hard-coding.
-2. **Remove the overlay/watermark** — only when the user wants a clean sheet. Same white-point operation handles light tints; heavy watermarks need a mask.
-3. **Remove answer/annotation colour** — see the classification rule below. This is where past runs broke sheets.
-4. **Sharpen lightly.** `UnsharpMask(radius≈1.2, percent 30–55, threshold 2)`. More than 60% fattens strokes and visibly darkens the page.
-5. **Convert to grayscale** for the student/consume copy when only black ink remains; keep colour for the answer-key copy.
-6. **Embed losslessly** (see packaging).
+1. **抬白点。** 把纸张底色映射成纯白。屏幕渲染的页面，覆盖层通常只比纯白暗 10–20 个色阶，按 `255/236` 缩放就能压干净，而黑色字仍然是黑的。具体数值以探针量到的实际底色为准，不要硬编码。
+2. **去水印/覆盖层** — 仅在用户需要干净卷面时做。浅色淡印靠抬白点就能解决；深色水印需要单独做蒙版。
+3. **去掉答案/批注的颜色** — 见下面的分类规则。过去出问题基本都出在这一步。
+4. **轻度锐化。** `UnsharpMask(radius≈1.2, percent 30–55, threshold 2)`。超过 60% 笔画会变粗，整页明显发黑。
+5. **转灰度** — 只剩黑色墨迹的给学生用那一版；答案版保留彩色。
+6. **无损封装**（见打包一节）。
 
 ```bash
-# cleaned student copy, answers removed
+# 学生版：去答案、转灰度
 python3 scripts/clean.py --inputs 1.jpg 2.jpg 3.jpg 4.jpg --outdir build/student \
     --drop-red --gray --white-point 236 --sharpen 55
 
-# answer-key copy, red answers kept
+# 答案版：保留红色答案
 python3 scripts/clean.py --inputs 1.jpg 2.jpg 3.jpg 4.jpg --outdir build/answer \
     --white-point 236 --sharpen 55
 ```
 
-### Colour-removal classification rule (the part that breaks silently)
+### 彩色删除的分类规则（最容易无声出错的地方）
 
-A red answer block and a red mark that belongs to the artwork look identical to a colour filter. Separate them by **size**, then by **layout geometry**:
+印刷的红色答案块，和图形本身自带的红色标记，在颜色滤镜眼里长得一模一样。先按**面积**分，再按**版面几何**分：
 
-- Cluster area ≥ ~200 px at 150 dpi → text, removes cleanly.
-- Cluster area < ~100 px, sitting on a line junction or a figure vertex → **graphic element, keep it**. Erasing it leaves gaps at every vertex of every diagram.
-- Answers sit at the end of a sentence, preceded by a whitespace gap of roughly one character. Erasing by colour threshold alone leaves the thin `（` surviving, because JPEG chroma subsampling turns a hairline stroke into neutral grey that no colour threshold catches. **Use the gap**: scan left from the answer cluster to the first ≥8-column blank run, then clear the whole strip from there.
-- Scan that gap on the **cluster's own text rows only**. If the blank band is an answer underline, it bridges the gap and the scan runs back through the preceding sentence, deleting real content. This failure is invisible in a thumbnail — only a "source ink that vanished" check catches it.
+- 150 dpi 下色块面积 ≥ 约 200 px → 是文字，可以放心删。
+- 面积 < 约 100 px、正好落在笔画交点或图形顶点上 → **属于图形，必须保留**。删掉它，每张图的每个顶点都会出现缺口。
+- 答案位于句末，前面隔着大约一个字的空白。只按颜色阈值删，会剩下一个很细的 `（`：JPEG 色度下采样会把细笔画变成中性灰，任何颜色阈值都抓不到它。**改用空白间隙定位**：从答案色块向左扫描，找到第一段 ≥8 列的空白作为正文与答案的分界，从分界处整条抹白。
+- 扫描间隙时**只用该色块自身所在的文字行**。如果取样行向下扩到答案下划线所在的行，下划线会把空白「桥接」掉，扫描就会一路向左穿过前一句，把真正的正文删掉。这个错误在缩略图上看不出来，只有「源图墨迹消失」检测能发现。
 
-`clean.py` carries both rules. Look at the output anyway — the script cannot know that a stray red dot was a vertex.
+`clean.py` 已内置这两条规则。但输出仍要人眼过一遍——脚本无法判断某个孤立红点其实是图形顶点。
 
-## Packaging: lossless, or the work is wasted
+## 打包：不无损，前面的功夫就白费了
 
-Pillow's `save(..., "PDF")` re-encodes every page as JPEG (DCTDecode) at default quality, so a page that took work to clean gets compressed again. Use `scripts/make_pdf.py`, which embeds Flate-compressed image data and sets the MediaBox to the exact physical page size.
+Pillow 的 `save(..., "PDF")` 会把每一页重新按 JPEG（DCTDecode）默认质量编码一遍，辛苦清理过的页面又压了一次。请用 `scripts/make_pdf.py`，它内嵌 Flate 压缩的图像数据，并把 MediaBox 设成精确的物理页面尺寸。
 
 ```bash
 python3 scripts/make_pdf.py --images build/student/*.png \
     --output 学生版.pdf --size a4 --orientation auto --title "标题"
 ```
 
-- Page size comes from `--size`; `--orientation auto` picks the one matching the image aspect and refuses a mismatch above 1%.
-- Never resample to 300 dpi. Upscaling a 155 dpi page adds bytes, not detail; print it at 100% instead. Say so explicitly if the user expects "300 dpi".
+- 页面尺寸由 `--size` 决定；`--orientation auto` 自动选择与图像长宽比匹配的方向，偏差超过 1% 会直接拒绝，避免页面被悄悄拉伸。
+- 永远不要重采样到 300 dpi。把 155 dpi 的页面放大会增加体积、不会增加细节；打印时按 100% 输出才对。如果用户以为需要「300 dpi」，要明确说明这一点。
 
-## Then check it pixel by pixel
+## 做完逐像素核对
 
 ```bash
 python3 scripts/verify.py --pdf 学生版.pdf --sources 1.jpg 2.jpg 3.jpg 4.jpg \
     --workdir build/student --answers auto
 ```
 
-`--answers auto` decides per copy whether colour should have been stripped or kept; force `strip` / `keep` when the detection could be fooled.
+`--answers auto` 会按每一份成品自动判断这份应该「已删除彩色」还是「保留彩色」；判断可能被误导时，直接指定 `strip` 或 `keep`。
 
-It decodes the images back out of the PDF and checks:
+脚本会把图像从 PDF 里解出来反向核对：
 
-| Check | Pass condition |
+| 检查项 | 通过条件 |
 |---|---|
-| PDF image vs processing output | max diff 0 (proves the container is lossless) |
-| Content bbox vs source | identical, no crop and no shift |
-| Ink IoU / row-profile correlation | correlation ≥ 0.99 (IoU alone drops on 1–2 px strokes after sharpening) |
-| Residual ink in erased strips | 0 pixels |
-| Source ink that vanished | no cluster ≥ 20 px outside the colour areas — catches over-erasure |
-| Answer-key copy retains colour | every answer block still has coloured pixels |
-| Page geometry | exact mm size, expected page count, Flate only |
+| PDF 内嵌图 vs 处理输出 | 最大差 0（证明封装无损） |
+| 内容外框 vs 原图 | 完全一致，无裁切、无位移 |
+| 墨迹 IoU / 行投影相关 | 相关系数 ≥ 0.99（锐化后 1–2 px 的笔画会让单看 IoU 掉分） |
+| 抹除区残留 | 0 像素 |
+| 源图墨迹消失 | 彩色区域之外没有 ≥ 20 px 的消失簇——专门抓过量抹除 |
+| 答案版保留彩色 | 每一处答案块仍有彩色像素 |
+| 页面尺寸 | 毫米尺寸精确、页数正确、仅 Flate 编码 |
 
-Then look at the rendered pages once. Automated diffing cannot judge whether a figure still reads correctly.
+最后再把渲染出来的页面看一遍。自动比对判断不了图形还看不看得懂。
 
-Report a failure honestly instead of shipping it. If a fix changes an earlier claim, say what changed.
+有问题就照实说，不要带着缺陷交付。如果修复推翻了之前的结论，要说明改了什么。
 
-## Delivering the file
+## 交付
 
-- Name files by content and role: `<标题>_学生版.pdf`, `<标题>_答案版.pdf`. Two copies is usually right: a clean one to work on, an annotated one to check against.
-- Tell the user the print settings that actually matter: paper size, orientation, and **scale 100% / actual size**, with fit-to-page turned off, because driver-side scaling resamples a second time.
-- Report page count, physical size, effective dpi, and the checks that passed. Do not claim "300 dpi" when the source cannot support it.
-- Keep intermediates in a temp directory; deliver only the PDFs.
+- 按内容和用途命名：`<标题>_学生版.pdf`、`<标题>_答案版.pdf`。通常两份就够——一份干净给孩子做，一份带答案对照。
+- 告诉用户真正要紧的打印设置：纸张尺寸、方向，以及**缩放选 100% / 实际大小**，关掉「适应页面」，因为打印驱动再缩一次就是二次插值。
+- 报清页数、物理尺寸、有效 dpi，以及通过了哪些检查。源图撑不住的，不要说成「300 dpi」。
+- 中间文件放临时目录，只交付 PDF。
 
-## Common mistakes
+## 常见错误
 
-- Erasing red before checking whether the artwork uses red.
-- Judging removal at thumbnail scale; thin leftover parentheses and grey ghosts are only visible at 2–3×.
-- Trusting the eye instead of decoding the PDF and comparing pixels.
-- Cropping to the ink bbox "for a tighter margin" — it shifts everything and can clip the last line.
-- Re-running the PDF writer after editing only the images, then comparing against a stale file.
-- Trusting "残留为 0" alone: it proves nothing was left over, not that nothing was eaten. Check vanished ink too.
+- 没确认图形里有没有红色，就先删红。
+- 在缩略图尺寸下判断删除效果；残留的细括号和灰影只有在 2–3 倍放大后才看得见。
+- 只靠眼睛看，不把 PDF 解出来逐像素比。
+- 为了「页边距更紧」按墨迹外框裁切——整页会位移，最后一行可能被切掉。
+- 只改了图、没重新生成 PDF，却拿着旧文件做比对。
+- 只看「残留为 0」：它只证明没剩东西，不证明没被吃掉。还要检查消失的墨迹。
