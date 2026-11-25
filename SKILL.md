@@ -12,19 +12,18 @@ description: 把手机拍的试卷照片转成能直接打印的 A4 PDF，去掉
 - 按原始比例排 A4，不拉伸、不裁切
 - 无损导出，打印不糊、不重复压缩
 
-## 用法
+## 适用
 
-```bash
-python3 scripts/probe_pages.py 1.jpg 2.jpg 3.jpg 4.jpg      # 先量：尺寸、清晰度、有没有歪
-python3 scripts/clean.py --inputs 1.jpg 2.jpg 3.jpg 4.jpg \
-    --outdir build/student --drop-red --gray                # 去水印、去答案，学生版
-python3 scripts/make_pdf.py --images "build/student/*.png" \
-    --output 学生版.pdf --size a4                           # 合成 A4 PDF
-python3 scripts/verify.py --pdf 学生版.pdf --sources 1.jpg 2.jpg 3.jpg 4.jpg \
-    --workdir build/student                                 # 逐像素核对
-```
+- 手机拍的整页照片、截图、从 PDF 里导出的页面
+- A4 或 A4 横向的试卷、练习卷、讲义，黑白彩色都行
+- 有印刷答案也好，没有也好
 
-只要答案版：`clean.py` 去掉 `--drop-red --gray`，`make_pdf.py` 指向 `build/answer`。
+## 限制
+
+- 源图低于 140 dpi，打印会发虚，这个工具补不回来
+- 手写的铅笔、圆珠笔痕迹去不掉，只能原样保留
+- 水印正好压在字上时，那一片只能抹白，字会有缺口
+- 只做净化和排版，不改题目、不换题，也不做 OCR 重排
 
 ## 规则
 
